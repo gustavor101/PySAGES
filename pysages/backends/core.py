@@ -2,6 +2,7 @@
 # Copyright (c) 2020-2021: PySAGES contributors
 # See LICENSE.md and CONTRIBUTORS.md at https://github.com/SSAGESLabs/PySAGES
 
+from dataclasses import dataclass
 from importlib import import_module
 from typing import Callable
 
@@ -13,6 +14,15 @@ import warnings
 
 # Set default floating point type for arrays in `jax` to `jax.f64`
 jax.config.update("jax_enable_x64", True)
+
+
+@dataclass
+class JaxMDContext:
+    box: JaxArray
+    force_fn: Callable
+    init_fn: Callable
+    step_fn: Callable
+    dt: Union[JaxArray, float]
 
 
 class ContextWrapper:
@@ -31,6 +41,8 @@ class ContextWrapper:
             self._backend_name = "hoomd"
         elif module_name.startswith("simtk.openmm") or module_name.startswith("openmm"):
             self._backend_name = "openmm"
+        elif isinstance(context, JaxMDContext):
+            self._backend_name = "jax-md"
 
         if self._backend_name is not None:
             self._backend = import_module("." + self._backend_name, package="pysages.backends")
@@ -71,4 +83,4 @@ class ContextWrapper:
 
 
 def supported_backends():
-    return ("hoomd", "openmm")
+    return ("jax-md", "hoomd", "openmm")
