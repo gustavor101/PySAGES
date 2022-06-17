@@ -24,6 +24,18 @@ from jax import numpy as np, scipy
 from pysages.grids import build_indexer
 from pysages.methods.core import GriddedSamplingMethod, generalize
 from pysages.utils import JaxArray
+#$$ for analysis
+from pysages.utils import dispatch
+from functools import partial
+from pysages.approxfun.core import compute_mesh, scale as _scale
+from pysages.grids import build_indexer
+from pysages.methods.core import NNSamplingMethod, generalize
+from pysages.ml.models import MLP, Siren
+from pysages.ml.objectives import GradientsSSE, L2Regularization
+from pysages.ml.optimizers import LevenbergMarquardt
+from pysages.ml.training import NNData, build_fitting_function, normalize, convolve
+from pysages.ml.utils import blackman_kernel, pack, unpack
+from pysages.utils import Bool, Int, JaxArray
 
 
 class ABFState(NamedTuple):
@@ -51,7 +63,7 @@ class ABFState(NamedTuple):
     bias: JaxArray
     xi: JaxArray
     hist: JaxArray
-    force_sum: JaxArray
+    Fsum: JaxArray
     force: JaxArray
     Wp: JaxArray
     Wp_: JaxArray
@@ -146,11 +158,11 @@ def _abf(method, snapshot, helpers):
         """
         bias = np.zeros((natoms, 3))
         hist = np.zeros(grid.shape, dtype=np.uint32)
-        force_sum = np.zeros((*grid.shape, dims))
+        Fsum = np.zeros((*grid.shape, dims))
         force = np.zeros(dims)
         Wp = np.zeros(dims)
         Wp_ = np.zeros(dims)
-        return ABFState(bias, None, hist, force_sum, force, Wp, Wp_)
+        return ABFState(bias, None, hist, Fsum, force, Wp, Wp_)
 
     def update(state, data):
         """
@@ -183,13 +195,84 @@ def _abf(method, snapshot, helpers):
         I_xi = get_grid_index(xi)
         N_xi = state.hist[I_xi] + 1
         # Add previous force to remove bias
-        force_xi = state.force_sum[I_xi] + dWp_dt + state.force
+        force_xi = state.Fsum[I_xi] + dWp_dt + state.force
         hist = state.hist.at[I_xi].set(N_xi)
-        force_sum = state.force_sum.at[I_xi].set(force_xi)
+        Fsum = state.Fsum.at[I_xi].set(force_xi)
         force = force_xi / np.maximum(N_xi, N)
 
         bias = np.reshape(-Jxi.T @ force, state.bias.shape)
 
-        return ABFState(bias, xi, hist, force_sum, force, Wp, state.Wp)
+        return ABFState(bias, xi, hist, Fsum, force, Wp, state.Wp)
 
     return snapshot, initialize, generalize(update, helpers)
+
+@dispatch
+def analyze(result: pysages.methods.abf.ABFState,topology):
+    """
+    Computes the free energy from the result of an `ABF` run.
+    """
+
+    def _learn_forces(train, train_freq, ps, state):
+    # Reset the network parameters before the first training cycles
+    # nn = state.nn
+    # nn = cond(
+    #     state.nstep <= 4 * train_freq,
+    #     lambda nn: NNData(ps, nn.mean, nn.std),
+    #     lambda nn: nn,
+    #     nn
+    # )
+        hist = np.expand_dims(state.hist, state.hist.ndim)
+        F = state.Fsum / np.maximum(hist, 1)
+        return train(state.nn, F)
+
+
+
+    class AnalysisState(NamedTuple):
+        hist: JaxArray
+        Fsum: JaxArray
+        nn:   NNData
+
+
+    def train_result(fit, smooth, inputs, nn, y):
+        axes = tuple(range(y.ndim - 1))
+    # y, mean, std = normalize(y, axes = axes)
+        std = y.std(axis = axes).max()
+        reference = smooth(y / std)
+        params = fit(nn.params, inputs, reference).params
+        return NNData(params, nn.mean, std / reference.std(axis = axes).max())
+
+
+    scale = partial(_scale, grid = result.grid)
+    dims = result.grid.shape.size
+    model = MLP(dims, 1, topology, transform = scale)
+    ps, layout = unpack(model.parameters)
+
+    optimizer = LevenbergMarquardt(
+        loss = GradientsSSE(), max_iters = 2500, reg = L2Regularization(1e-3)
+    )
+    fit = build_fitting_function(model, optimizer)
+    inputs = (compute_mesh(grid) + 1) * grid.size / 2 + grid.lower
+    w = 5 if type(model) is Siren else 7
+    smooth = partial(
+        convolve,
+        kernel = blackman_kernel(dims, w),
+        boundary = "wrap" if grid.is_periodic else "edge"
+    )
+    train = jit(partial(train_result, fit, lambda y: vmap(smooth)(y.T).T, inputs))
+    learn_forces = jit(partial(_learn_forces, train, 1, ps))
+
+    mesh = compute_mesh(grid)
+    x = grid.size * (mesh + 1) / 2 + grid.lower
+
+
+# %%
+    mean_forces=result.Fsum.reshape(-1,1)/np.maximum(result.hist.reshape(-1,1),1)
+    analysis_state = AnalysisState(Result.hist, result.Fsum, NNData(ps, 0.0, 1.0))
+    nn = learn_forces(analysis_state)
+    A = nn.std * model.apply(pack(nn.params, layout), x) + nn.mean
+    A = (A.max() - A).reshape(finegrid.shape)
+    return dict(
+        mean_forces=mean_forces,
+        free_energy=A,
+        cvfit=x,
+    )

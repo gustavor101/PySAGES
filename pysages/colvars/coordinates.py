@@ -103,4 +103,4 @@ def distance(p1, p2):
     distance : float
         Distance between the two points.
     """
-    return linalg.norm(p1 - p2)
+    return linalg.norm(barycenter(p1) - barycenter(p2))

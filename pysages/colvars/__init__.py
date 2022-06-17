@@ -33,3 +33,7 @@ from .utils import (
     get_periods,
     wrap,
 )
+from .projection import (
+    Projection_Parallel,
+    Projection_Perpendicular,
+)

@@ -53,6 +53,8 @@ to sample multiple replicas along a path to estimate free energy differences.
 from .core import SamplingMethod
 
 from .abf import ABF
+from .abfres import rABF
+from .funnres import rFUNN
 from .ann import ANN
 from .ffs import FFS
 from .funn import FUNN
