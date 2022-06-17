@@ -84,6 +84,12 @@ class Result:
         self.states = states
         self.callbacks = callbacks
 
+    @dispatch
+    def __init__(self, method: GriddedSamplingMethod, states, callbacks=None):
+        self.method = method
+        self.states = states
+        self.callbacks = callbacks
+
 
 #  Main functions
 #  ==============
