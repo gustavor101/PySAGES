@@ -5,7 +5,7 @@ import jax.numpy.linalg as linalg
 import matplotlib.pyplot as plt
 
 
-def cone(x, eje, Z_pos, Zcc, alpha, R, k):
+def cone(x, eje, Z_pos, alpha, R, k):
     apex = Z_pos + (R / np.tan(alpha)) * eje
     x_fit = x - apex
     proj = np.dot(x_fit, eje) * eje
@@ -75,4 +75,22 @@ for i in range(0, 50):
             )
             lista.append([x, y, z, color])
 numpy.savetxt("color.txt", lista)
+lista = []
+for i in range(0, 5):
+    for j in range(0, 5):
+        for k in range(0, 5):
+            x = -2.0 + i * 4.0 / 2.5
+            y = -4.0 + j * 4.0 / 2.5
+            z = -2.0 + k * 4.0 / 5.0
+            color = test_grad(
+                [x, y, z],
+                A=[0, 0, 0],
+                B=[1, 0, 0],
+                Zcc=1.0,
+                alpha=np.pi / 4.0,
+                R=0.5,
+                k=0.1,
+            )
+            lista.append([x, y, z, -color[0], -color[1], -color[2]])
+numpy.savetxt("colorvec.txt", lista)
 exit()
