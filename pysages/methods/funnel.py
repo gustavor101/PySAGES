@@ -48,7 +48,7 @@ def funnel(x, A, B, Zcc, alpha, R, k):
     #        return cylinder(x_fit, eje, R, k)
     return np.where(
         proj < Zcc,
-        cone(x_fit, eje, Z_pos, Zcc, alpha, R, k),
+        cone(x_fit, eje, Z_pos, alpha, R, k),
         cylinder(x_fit, eje, R, k),
     )
 
