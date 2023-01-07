@@ -32,6 +32,13 @@ def cylinder(x, eje, R, k):
     #        return k*F
     return np.where(F < 0.0, 0.0, k * F)
 
+def rotation_AB(pos_ref, references, weights, A, B):
+    com_prot = center(pos_ref, weights)
+    _, rotmat = linalg.eigh(quaternion_matrix(pos_ref, references, weights))
+    quat = rotmat[:3]
+    A_rot = np.matmul(create_matrot(quat), A - com_prot)
+    B_rot = np.matmul(create_matrot(quat), B - com_prot)
+    return A_rot + com_prot, B_rot + com_prot
 
 def funnel(x, A, B, Zcc, alpha, R, k):
     x = np.asarray(x)
@@ -52,7 +59,13 @@ def funnel(x, A, B, Zcc, alpha, R, k):
         cylinder(x_fit, eje, R, k),
     )
 
-
+def external_funnel(data, indices, references,weights_ligand, weights_protein, A, B, Zcc, alpha, R, k):
+    indices_ligand=indices[0]
+    indices_protein= indices[1]
+    pos_ligand = center(data.positions(indices_ligand),weights_ligand)
+    pos_protein= data.positions(indices_protein)
+    A_rot, B_rot = rotation_AB(pos_protein,references,weights_protein, A, B)
+    return funnel(pos_ligand, A_rot, B_rot, Zcc, alpha, R, k)
 test_grad = grad(funnel)
 x=np.array([0.,0.,10.])
 print(test_grad(x, [1., 0., 0.], [3., 0., 0.], 1., np.pi / 4., 1., 10.))
