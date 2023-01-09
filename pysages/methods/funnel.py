@@ -62,8 +62,10 @@ def funnel(x, A, B, Zcc, alpha, R, k):
 def external_funnel(data, indices, references,weights_ligand, weights_protein, A, B, Zcc, alpha, R, k):
     indices_ligand=indices[0]
     indices_protein= indices[1]
-    pos_ligand = center(data.positions(indices_ligand),weights_ligand)
-    pos_protein= data.positions(indices_protein)
+    pos=data.positions[:,:3]
+    ids= data.indices
+    pos_ligand = center(pos[ids[indices_ligand]],weights_ligand)
+    pos_protein= pos[ids[indices_protein]]
     A_rot, B_rot = rotation_AB(pos_protein,references,weights_protein, A, B)
     return funnel(pos_ligand, A_rot, B_rot, Zcc, alpha, R, k)
 test_grad = grad(funnel)
