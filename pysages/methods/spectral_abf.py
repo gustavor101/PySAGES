@@ -16,9 +16,9 @@ provided by the basis functions expansion.
 
 from typing import NamedTuple, Tuple
 
-from jax import jit, numpy as np
+from jax import jit
+from jax import numpy as np
 from jax.lax import cond
-from jax.scipy.linalg import solve
 
 from pysages.approxfun import (
     Fun,
@@ -31,7 +31,8 @@ from pysages.approxfun import (
 from pysages.grids import Chebyshev, Grid, build_indexer, convert
 from pysages.methods.core import GriddedSamplingMethod, Result, generalize
 from pysages.methods.restraints import apply_restraints
-from pysages.utils import Bool, Int, JaxArray, dispatch
+from pysages.methods.utils import numpyfy_vals
+from pysages.utils import Bool, Int, JaxArray, dispatch, solve_pos_def
 
 
 class SpectralABFState(NamedTuple):
@@ -162,7 +163,7 @@ def _spectral_abf(method, snapshot, helpers):
 
     def initialize():
         xi, _ = cv(helpers.query(snapshot))
-        bias = np.zeros((natoms, 3))
+        bias = np.zeros((natoms, helpers.dimensionality()))
         hist = np.zeros(grid.shape, dtype=np.uint32)
         Fsum = np.zeros((*grid.shape, dims))
         force = np.zeros(dims)
@@ -182,7 +183,7 @@ def _spectral_abf(method, snapshot, helpers):
         xi, Jxi = cv(data)
         #
         p = data.momenta
-        Wp = solve(Jxi @ Jxi.T, Jxi @ p, sym_pos="sym")
+        Wp = solve_pos_def(Jxi @ Jxi.T, Jxi @ p)
         # Second order backward finite difference
         dWp_dt = (1.5 * Wp - 2.0 * state.Wp + 0.5 * state.Wp_) / dt
         #
@@ -323,7 +324,7 @@ def analyze(result: Result[SpectralABF]):
         funs.append(s.fun)
         fes_fns.append(fes_fn)
 
-    return dict(
+    ana_result = dict(
         histogram=first_or_all(hists),
         mean_force=first_or_all(mean_forces),
         free_energy=first_or_all(free_energies),
@@ -331,3 +332,4 @@ def analyze(result: Result[SpectralABF]):
         fun=first_or_all(funs),
         fes_fn=first_or_all(fes_fns),
     )
+    return numpyfy_vals(ana_result)

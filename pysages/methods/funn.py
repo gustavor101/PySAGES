@@ -18,25 +18,23 @@ appropriate method.
 from functools import partial
 from typing import NamedTuple, Tuple
 
-from jax import jit, numpy as np, vmap
+from jax import jit
+from jax import numpy as np
+from jax import vmap
 from jax.lax import cond
-from jax.scipy import linalg
 
-from pysages.approxfun import compute_mesh, scale as _scale
+from pysages.approxfun import compute_mesh
+from pysages.approxfun import scale as _scale
 from pysages.grids import build_indexer
 from pysages.methods.core import NNSamplingMethod, Result, generalize
 from pysages.methods.restraints import apply_restraints
+from pysages.methods.utils import numpyfy_vals
 from pysages.ml.models import MLP
 from pysages.ml.objectives import GradientsSSE, L2Regularization
 from pysages.ml.optimizers import LevenbergMarquardt
-from pysages.ml.training import (
-    NNData,
-    build_fitting_function,
-    normalize,
-    convolve,
-)
+from pysages.ml.training import NNData, build_fitting_function, convolve, normalize
 from pysages.ml.utils import blackman_kernel, pack, unpack
-from pysages.utils import Bool, Int, JaxArray, dispatch
+from pysages.utils import Bool, Int, JaxArray, dispatch, solve_pos_def
 
 
 class FUNNState(NamedTuple):
@@ -168,7 +166,7 @@ def _funn(method, snapshot, helpers):
 
     def initialize():
         xi, _ = cv(helpers.query(snapshot))
-        bias = np.zeros((natoms, 3))
+        bias = np.zeros((natoms, helpers.dimensionality()))
         hist = np.zeros(grid.shape, dtype=np.uint32)
         Fsum = np.zeros((*grid.shape, dims))
         F = np.zeros(dims)
@@ -188,7 +186,7 @@ def _funn(method, snapshot, helpers):
         xi, Jxi = cv(data)
         #
         p = data.momenta
-        Wp = linalg.solve(Jxi @ Jxi.T, Jxi @ p, sym_pos="sym")
+        Wp = solve_pos_def(Jxi @ Jxi.T, Jxi @ p)
         dWp_dt = (1.5 * Wp - 2.0 * state.Wp + 0.5 * state.Wp_) / dt
         #
         I_xi = get_grid_index(xi)
@@ -362,8 +360,8 @@ def analyze(result: Result[FUNN]):
         return jit(fes_fn)
 
     def average_forces(hist, Fsum):
-        hist = np.expand_dims(hist, hist.ndim)
-        return Fsum / np.maximum(hist, 1)
+        shape = (*Fsum.shape[:-1], 1)
+        return Fsum / np.maximum(hist.reshape(shape), 1)
 
     def first_or_all(seq):
         return seq[0] if len(seq) == 1 else seq
@@ -382,7 +380,7 @@ def analyze(result: Result[FUNN]):
         nns.append(s.nn)
         fes_fns.append(fes_fn)
 
-    return dict(
+    ana_result = dict(
         histogram=first_or_all(hists),
         mean_force=first_or_all(mean_forces),
         free_energy=first_or_all(free_energies),
@@ -390,3 +388,4 @@ def analyze(result: Result[FUNN]):
         nn=first_or_all(nns),
         fes_fn=first_or_all(fes_fns),
     )
+    return numpyfy_vals(ana_result)
