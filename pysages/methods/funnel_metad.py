@@ -150,6 +150,7 @@ class Metadynamics(GriddedSamplingMethod):
         self.deltaT = deltaT
 
         self.kB = kwargs.get("kB", None)
+        self.external_force = self.kwargs.get("external_force", lambda rs: 0)
 
     def build(self, snapshot, helpers, *args, **kwargs):
         return _metadynamics(self, snapshot, helpers)
@@ -200,7 +201,7 @@ def _metadynamics(method, snapshot, helpers):
 
         # Calculate biasing forces
         bias = -Jxi.T @ generalized_force.flatten()
-        bias = bias.reshape(state.bias.shape)
+        bias = bias.reshape(state.bias.shape) + external_force(data)
 
         return MetadynamicsState(xi, bias, *partial_state[1:-1], nstep + 1)
 
