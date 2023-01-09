@@ -3,7 +3,7 @@ from jax import grad
 import numpy
 import jax.numpy.linalg as linalg
 import matplotlib.pyplot as plt
-
+from pysages.colvars.funnel-cv import center, create_matrot, quaternion_matrix
 
 def cone(x, eje, Z_pos, alpha, R, k):
     apex = Z_pos + (R / np.tan(alpha)) * eje
