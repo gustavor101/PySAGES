@@ -31,6 +31,10 @@ class SteeredState(NamedTuple):
 
     bias: JaxArray
         Array with harmonic biasing forces for each particle in the simulation.
+    centers: JaxArray
+        Array with the dynamic centers of the CVs.
+    work: JaxArray
+        Arraw with the accumulated work in the run.
     """
 
     xi: JaxArray
@@ -44,7 +48,7 @@ class SteeredState(NamedTuple):
 
 class Steered(Bias):
     """
-    Harmonic bias method class.
+    Steered method class.
     """
 
     __special_args__ = Bias.__special_args__.union({"kspring", "velocity"})
@@ -60,7 +64,7 @@ class Steered(Bias):
         center:
             An array of length `N` representing the initial state of the harmonic biasing potential.
         velocity:
-            An array of length `N` representing the constant velocity of movement of the centers.
+            An array of length `N` representing the constant velocity of movement of the centers. Units are CVs/time
         """
         super().__init__(cvs, center, **kwargs)
         self.cv_dimension = len(cvs)
