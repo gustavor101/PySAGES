@@ -6,11 +6,6 @@ Steered Molecular Dynamics.
 
 Biasing a simulation towards a value of a collective variable using a time dependent Harmonic Bias.
 This method implements such a bias.
-
-The Hamiltonian is amended with a term
-:math:`\\mathcal{H} = \\mathcal{H}_0 + \\mathcal{H}_\\mathrm{HB}(\\xi(t))` where
-:math:`\\mathcal{H}_\\mathrm{HB}(\\xi) = \\boldsymbol{K}/2 (\\xi_0(t) - \\xi)^2`
-biases the simulations around the collective variable :math:`\\xi_0(t)`.
 """
 
 from typing import NamedTuple
