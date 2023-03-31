@@ -169,6 +169,47 @@ class MetaDLogger:
         self.counter += 1
 
 
+class SteeredLogger:
+    """
+    Logs the state of the collective variable and other parameters in Steered.
+
+    Parameters
+    ----------
+    steered_file:
+        Name of the output steered log file.
+
+    log_period:
+        Time steps between logging of collective variables and Steered parameters.
+    """
+
+    def __init__(self, steered_file, log_period):
+        """
+        SteeredLogger constructor.
+        """
+        self.steered_file = steered_file
+        self.log_period = log_period
+        self.counter = 0
+
+    def save_work(self, xi, centers, work):
+        """
+        Append the cv, centers, and work to log file.
+        """
+        with open(self.steered_file, "a+", encoding="utf8") as f:
+            f.write(str(self.counter) + "\t")
+            f.write("\t".join(map(str, xi.flatten())) + "\t")
+            f.write("\t".join(map(str, centers.flatten())) + "\t")
+            f.write(str(work) + "\n")
+
+    def __call__(self, snapshot, state, timestep):
+        """
+        Implements the logging itself. Interface as expected for Callbacks.
+        """
+        if self.counter >= self.log_period and self.counter % self.log_period == 0:
+            self.save_work(state.xi, state.centers, state.work)
+
+        self.counter += 1
+
+
 def listify(arg, replicas, name, dtype):
     """
     Returns a list of with length `replicas` of `arg` if `arg` is not a list,

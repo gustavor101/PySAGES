@@ -71,6 +71,7 @@ from .metad import Metadynamics
 from .restraints import CVRestraints
 from .spectral_abf import SpectralABF
 from .spline_string import SplineString
+from .steered import Steered
 from .umbrella_integration import UmbrellaIntegration
 from .unbiased import Unbiased
 from .utils import (
@@ -78,5 +79,6 @@ from .utils import (
     MetaDLogger,
     ReplicasConfiguration,
     SerialExecutor,
+    SteeredLogger,
     methods_dispatch,
 )
