@@ -31,6 +31,15 @@ class SteeredState(NamedTuple):
 
     bias: JaxArray
         Array with harmonic biasing forces for each particle in the simulation.
+
+    centers: JaxArray
+        Moving centers of the harmonic bias applied.
+
+    forces: JaxArray
+        Array with harmonic forces for each collective variable in the simulation.
+
+    work: JaxArray
+        Array with the current work applied in the simulation.
     """
 
     xi: JaxArray
@@ -45,12 +54,12 @@ class SteeredState(NamedTuple):
 
 class Steered(Bias):
     """
-    Harmonic bias method class.
+    Steered method class.
     """
 
-    __special_args__ = Bias.__special_args__.union({"kspring", "velocity"})
+    __special_args__ = Bias.__special_args__.union({"kspring", "steer_velocity"})
 
-    def __init__(self, cvs, kspring, center, velocity, **kwargs):
+    def __init__(self, cvs, kspring, center, steer_velocity, **kwargs):
         """
         Arguments
         ---------
@@ -60,18 +69,18 @@ class Steered(Bias):
             A scalar, array length `N` or symmetric `N x N` matrix. Restraining spring constant.
         center:
             An array of length `N` representing the initial state of the harmonic biasing potential.
-        velocity:
-            An array of length `N` representing the constant velocity of movement of the centers.
+        steer_velocity:
+            An array of length `N` representing the constant steer_velocity. Units are cvs/time.
         """
         super().__init__(cvs, center, **kwargs)
         self.cv_dimension = len(cvs)
         self.kspring = kspring
-        self.velocity = velocity
+        self.steer_velocity = steer_velocity
 
     def __getstate__(self):
         state, kwargs = super().__getstate__()
         state["kspring"] = self._kspring
-        state["velocity"] = self._velocity
+        state["steer_velocity"] = self._steer_velocity
         return state, kwargs
 
     @property
@@ -114,25 +123,25 @@ class Steered(Bias):
         return self._kspring
 
     @property
-    def velocity(self):
+    def steer_velocity(self):
         """
-        Retrieve current velocity of the collective variable.
+        Retrieve current steer_velocity of the collective variable.
         """
-        return self._velocity
+        return self._steer_velocity
 
-    @velocity.setter
-    def velocity(self, velocity):
+    @steer_velocity.setter
+    def steer_velocity(self, steer_velocity):
         """
-        Set the velocity of the collective variable.
+        Set the steer_velocity of the collective variable.
         """
-        velocity = np.asarray(velocity)
-        if velocity.shape == ():
-            velocity = velocity.reshape(1)
-        if len(velocity.shape) != 1 or velocity.shape[0] != self.cv_dimension:
+        steer_velocity = np.asarray(steer_velocity)
+        if steer_velocity.shape == ():
+            steer_velocity = steer_velocity.reshape(1)
+        if len(steer_velocity.shape) != 1 or steer_velocity.shape[0] != self.cv_dimension:
             raise RuntimeError(
-                f"Invalid velocity shape expected {self.cv_dimension} got {velocity.shape}."
+                f"Invalid steer_velocity expected {self.cv_dimension} got {steer_velocity.shape}."
             )
-        self._velocity = velocity
+        self._steer_velocity = steer_velocity
 
     def build(self, snapshot, helpers, *args, **kwargs):
         return _steered(self, snapshot, helpers)
@@ -141,7 +150,7 @@ class Steered(Bias):
 def _steered(method, snapshot, helpers):
     cv = method.cv
     center = method.center
-    velocity = method.velocity
+    steer_velocity = method.steer_velocity
     dt = snapshot.dt
     kspring = method.kspring
     natoms = np.size(snapshot.positions, 0)
@@ -157,8 +166,8 @@ def _steered(method, snapshot, helpers):
     def update(state, data):
         xi, Jxi = cv(data)
         forces = kspring @ (xi - state.centers).flatten()
-        work = state.work - forces @ velocity.flatten() * dt
-        centers = state.centers + dt * velocity
+        work = state.work - forces @ steer_velocity.flatten() * dt
+        centers = state.centers + dt * steer_velocity
         bias = -Jxi.T @ forces.flatten()
         bias = bias.reshape(state.bias.shape)
 
