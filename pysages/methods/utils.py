@@ -190,7 +190,7 @@ class SteeredLogger:
         self.log_period = log_period
         self.counter = 0
 
-    def save_work(self, xi, centers, work):
+    def save_work(self, xi, centers, forces, work):
         """
         Append the cv, centers, and work to log file.
         """
@@ -198,6 +198,7 @@ class SteeredLogger:
             f.write(str(self.counter) + "\t")
             f.write("\t".join(map(str, xi.flatten())) + "\t")
             f.write("\t".join(map(str, centers.flatten())) + "\t")
+            f.write("\t".join(map(str, forces.flatten())) + "\t")
             f.write(str(work) + "\n")
 
     def __call__(self, snapshot, state, timestep):
@@ -205,7 +206,7 @@ class SteeredLogger:
         Implements the logging itself. Interface as expected for Callbacks.
         """
         if self.counter >= self.log_period and self.counter % self.log_period == 0:
-            self.save_work(state.xi, state.centers, state.work)
+            self.save_work(state.xi, state.centers, state.forces, state.work)
 
         self.counter += 1
 

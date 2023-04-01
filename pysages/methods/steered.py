@@ -6,6 +6,11 @@ Steered Molecular Dynamics.
 
 Biasing a simulation towards a value of a collective variable using a time dependent Harmonic Bias.
 This method implements such a bias.
+
+The Hamiltonian is amended with a term
+:math:`\\mathcal{H} = \\mathcal{H}_0 + \\mathcal{H}_\\mathrm{HB}(\\xi(t))` where
+:math:`\\mathcal{H}_\\mathrm{HB}(\\xi) = \\boldsymbol{K}/2 (\\xi_0(t) - \\xi)^2`
+biases the simulations around the collective variable :math:`\\xi_0(t)`.
 """
 
 from typing import NamedTuple
@@ -26,15 +31,12 @@ class SteeredState(NamedTuple):
 
     bias: JaxArray
         Array with harmonic biasing forces for each particle in the simulation.
-    centers: JaxArray
-        Array with the dynamic centers of the CVs.
-    work: JaxArray
-        Arraw with the accumulated work in the run.
     """
 
     xi: JaxArray
     bias: JaxArray
     centers: JaxArray
+    forces: JaxArray
     work: JaxArray
 
     def __repr__(self):
@@ -43,7 +45,7 @@ class SteeredState(NamedTuple):
 
 class Steered(Bias):
     """
-    Steered method class.
+    Harmonic bias method class.
     """
 
     __special_args__ = Bias.__special_args__.union({"kspring", "velocity"})
@@ -59,7 +61,7 @@ class Steered(Bias):
         center:
             An array of length `N` representing the initial state of the harmonic biasing potential.
         velocity:
-            An array of length `N` representing the constant velocity of movement of the centers. Units are CVs/time
+            An array of length `N` representing the constant velocity of movement of the centers.
         """
         super().__init__(cvs, center, **kwargs)
         self.cv_dimension = len(cvs)
@@ -149,16 +151,17 @@ def _steered(method, snapshot, helpers):
         bias = np.zeros((natoms, helpers.dimensionality()))
         centers = center
         work = np.asarray(0.0)
-        return SteeredState(xi, bias, centers, work)
+        forces = np.zeros(len(xi))
+        return SteeredState(xi, bias, centers, forces, work)
 
     def update(state, data):
         xi, Jxi = cv(data)
         forces = kspring @ (xi - state.centers).flatten()
-        work = state.work + forces @ velocity * dt
+        work = state.work - forces @ velocity.flatten() * dt
         centers = state.centers + dt * velocity
         bias = -Jxi.T @ forces.flatten()
         bias = bias.reshape(state.bias.shape)
 
-        return SteeredState(xi, bias, centers, work)
+        return SteeredState(xi, bias, centers, forces, work)
 
     return snapshot, initialize, generalize(update, helpers)
