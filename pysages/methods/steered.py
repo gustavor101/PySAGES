@@ -166,7 +166,7 @@ def _steered(method, snapshot, helpers):
     def update(state, data):
         xi, Jxi = cv(data)
         forces = kspring @ (xi - state.centers).flatten()
-        work = state.work - forces @ steer_velocity.flatten() * dt
+        work = state.work + forces @ steer_velocity.flatten() * dt
         centers = state.centers + dt * steer_velocity
         bias = -Jxi.T @ forces.flatten()
         bias = bias.reshape(state.bias.shape)
