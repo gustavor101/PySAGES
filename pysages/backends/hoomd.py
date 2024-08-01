@@ -3,7 +3,6 @@
 
 import importlib
 from functools import partial
-from typing import Callable
 from warnings import warn
 
 import hoomd
@@ -21,9 +20,9 @@ from hoomd.dlext import (
 )
 from jax import jit
 from jax import numpy as np
-from jax.dlpack import from_dlpack as asarray
+from jax.dlpack import from_dlpack
 
-from pysages.backends.core import ContextWrapper
+from pysages.backends.core import SamplingContext
 from pysages.backends.snapshot import (
     Box,
     HelperMethods,
@@ -32,7 +31,7 @@ from pysages.backends.snapshot import (
     build_data_querier,
 )
 from pysages.backends.snapshot import restore as _restore
-from pysages.methods import SamplingMethod
+from pysages.typing import Callable
 from pysages.utils import check_device_array, copy
 
 # TODO: Figure out a way to automatically tie the lifetime of Sampler
@@ -62,11 +61,15 @@ if getattr(hoomd, "__version__", "").startswith("2."):
         context.integrator.cpp_integrator.removeHalfStepHook()
 
 else:
+    if hasattr(hoomd.dlext, "__version__"):
+        SamplerBase = DLExtSampler
 
-    class SamplerBase(DLExtSampler, md.HalfStepHook):
-        def __init__(self, sysview, update, location, mode):
-            md.HalfStepHook.__init__(self)
-            DLExtSampler.__init__(self, sysview, update, location, mode)
+    else:
+
+        class SamplerBase(DLExtSampler, md.HalfStepHook):
+            def __init__(self, sysview, update, location, mode):
+                md.HalfStepHook.__init__(self)
+                DLExtSampler.__init__(self, sysview, update, location, mode)
 
     def is_on_gpu(context):
         return not isinstance(context.device, hoomd.device.CPU)
@@ -101,9 +104,9 @@ class Sampler(SamplerBase):
 
         super().__init__(sysview, update, default_location(), AccessMode.Read)
         self.state = initialize()
-        self.callback = callback
         self.bias = bias
         self.box = initial_snapshot.box
+        self.callback = callback
         self.dt = initial_snapshot.dt
         self._restore = restore
 
@@ -126,11 +129,11 @@ class Sampler(SamplerBase):
 
     def _pack_snapshot(self, positions, vel_mass, forces, rtags, images):
         return Snapshot(
-            asarray(positions),
-            asarray(vel_mass),
-            asarray(forces),
-            asarray(rtags),
-            asarray(images),
+            from_dlpack(positions),
+            from_dlpack(vel_mass),
+            from_dlpack(forces),
+            from_dlpack(rtags),
+            from_dlpack(images),
             self.box,
             self.dt,
         )
@@ -147,14 +150,14 @@ else:
         return AccessLocation.OnHost
 
 
-def take_snapshot(wrapped_context, location=default_location()):
-    context = wrapped_context.context
-    sysview = wrapped_context.view
-    positions = copy(asarray(positions_types(sysview, location, AccessMode.Read)))
-    vel_mass = copy(asarray(velocities_masses(sysview, location, AccessMode.Read)))
-    forces = copy(asarray(net_forces(sysview, location, AccessMode.ReadWrite)))
-    ids = copy(asarray(rtags(sysview, location, AccessMode.Read)))
-    imgs = copy(asarray(images(sysview, location, AccessMode.Read)))
+def take_snapshot(sampling_context, location=default_location()):
+    context = sampling_context.context
+    sysview = sampling_context.view
+    positions = copy(from_dlpack(positions_types(sysview, location, AccessMode.Read)))
+    vel_mass = copy(from_dlpack(velocities_masses(sysview, location, AccessMode.Read)))
+    forces = copy(from_dlpack(net_forces(sysview, location, AccessMode.ReadWrite)))
+    ids = copy(from_dlpack(rtags(sysview, location, AccessMode.Read)))
+    imgs = copy(from_dlpack(images(sysview, location, AccessMode.Read)))
 
     check_device_array(positions)  # currently, we only support `DeviceArray`s
 
@@ -201,17 +204,14 @@ def build_snapshot_methods(sampling_method):
 
 
 def build_helpers(context, sampling_method):
+    utils = importlib.import_module(".utils", package="pysages.backends")
+
     # Depending on the device being used we need to use either cupy or numpy
     # (or numba) to generate a view of jax's DeviceArrays
     if is_on_gpu(context):
-        cupy = importlib.import_module("cupy")
-        view = cupy.asarray
-
-        def sync_forces():
-            cupy.cuda.get_current_stream().synchronize()
+        sync_forces, view = utils.cupy_helpers()
 
     else:
-        utils = importlib.import_module(".utils", package="pysages.backends")
         view = utils.view
 
         def sync_forces():
@@ -241,17 +241,16 @@ def build_helpers(context, sampling_method):
     return helpers, restore, bias
 
 
-def bind(
-    wrapped_context: ContextWrapper, sampling_method: SamplingMethod, callback: Callable, **kwargs
-):
-    context = wrapped_context.context
+def bind(sampling_context: SamplingContext, callback: Callable, **kwargs):
+    context = sampling_context.context
+    sampling_method = sampling_context.method
     sysview = SystemView(get_system(context))
-    wrapped_context.view = sysview
-    wrapped_context.run = get_run_method(context)
+    sampling_context.view = sysview
+    sampling_context.run = get_run_method(context)
     helpers, restore, bias = build_helpers(context, sampling_method)
 
     with sysview:
-        snapshot = take_snapshot(wrapped_context)
+        snapshot = take_snapshot(sampling_context)
 
     method_bundle = sampling_method.build(snapshot, helpers)
     sync_and_bias = partial(bias, sync_backend=sysview.synchronize)

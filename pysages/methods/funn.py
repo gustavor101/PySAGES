@@ -15,7 +15,6 @@ appropriate method.
 """
 
 from functools import partial
-from typing import NamedTuple, Tuple
 
 from jax import jit
 from jax import numpy as np
@@ -34,7 +33,8 @@ from pysages.ml.objectives import L2Regularization
 from pysages.ml.optimizers import LevenbergMarquardt
 from pysages.ml.training import NNData, build_fitting_function, convolve, normalize
 from pysages.ml.utils import blackman_kernel, pack, unpack
-from pysages.utils import Bool, Int, JaxArray, dispatch, only_or_identity, solve_pos_def
+from pysages.typing import JaxArray, NamedTuple, Tuple
+from pysages.utils import dispatch, first_or_all, solve_pos_def
 
 
 class FUNNState(NamedTuple):
@@ -66,8 +66,8 @@ class FUNNState(NamedTuple):
     nn: NNData
         Bundle of the neural network parameters, and output scaling coefficients.
 
-    nstep: int
-        Count the number of times the method's update has been called.
+    ncalls: int
+        Counts the number of times the method's update has been called.
     """
 
     xi: JaxArray
@@ -78,7 +78,7 @@ class FUNNState(NamedTuple):
     Wp: JaxArray
     Wp_: JaxArray
     nn: NNData
-    nstep: Int
+    ncalls: int
 
     def __repr__(self):
         return repr("PySAGES " + type(self).__name__)
@@ -90,7 +90,7 @@ class PartialFUNNState(NamedTuple):
     Fsum: JaxArray
     ind: Tuple
     nn: NNData
-    pred: Bool
+    pred: bool
 
 
 class FUNN(NNSamplingMethod):
@@ -173,13 +173,13 @@ def _funn(method, snapshot, helpers):
         Wp = np.zeros(dims)
         Wp_ = np.zeros(dims)
         nn = NNData(ps, F, F)
-        return FUNNState(xi, bias, hist, Fsum, F, Wp, Wp_, nn, 1)
+        return FUNNState(xi, bias, hist, Fsum, F, Wp, Wp_, nn, 0)
 
     def update(state, data):
         # During the intial stage, when there are not enough collected samples, use ABF
-        nstep = state.nstep
-        in_training_regime = nstep > 2 * train_freq
-        in_training_step = in_training_regime & (nstep % train_freq == 1)
+        ncalls = state.ncalls + 1
+        in_training_regime = ncalls > 2 * train_freq
+        in_training_step = in_training_regime & (ncalls % train_freq == 1)
         # NN training
         nn = learn_free_energy_grad(state, in_training_step)
         # Compute the collective variable and its jacobian
@@ -198,7 +198,7 @@ def _funn(method, snapshot, helpers):
         )
         bias = (-Jxi.T @ F).reshape(state.bias.shape)
         #
-        return FUNNState(xi, bias, hist, Fsum, F, Wp, state.Wp, nn, state.nstep + 1)
+        return FUNNState(xi, bias, hist, Fsum, F, Wp, state.Wp, nn, ncalls)
 
     return snapshot, initialize, generalize(update, helpers)
 
@@ -332,5 +332,5 @@ def analyze(result: Result[FUNN], **kwargs):
     """
     topology = kwargs.get("topology", result.method.topology)
     _result = _analyze(result, GradientLearning(), topology)
-    _result["nn"] = only_or_identity([state.nn for state in result.states])
+    _result["nn"] = first_or_all([state.nn for state in result.states])
     return numpyfy_vals(_result)

@@ -7,7 +7,7 @@ jupyter:
       extension: .md
       format_name: markdown
       format_version: '1.3'
-      jupytext_version: 1.14.5
+      jupytext_version: 1.16.4
   kernelspec:
     display_name: Python 3
     name: python3
@@ -135,7 +135,7 @@ def post_process_pos(snapshot):
 
 def get_snap(system):
     L = system.L
-    snapshot = gsd.hoomd.Snapshot()
+    snapshot = gsd.hoomd.Frame()
     snapshot.configuration.box = [L, L, L, 0, 0, 0]
 
     snapshot.particles.N = N = system.N
@@ -158,7 +158,7 @@ system = System()
 snap = get_snap(system)
 snap = post_process_pos(snap)
 snap.particles.validate()
-with gsd.hoomd.open("harmonic_start.gsd", "wb") as f:
+with gsd.hoomd.open("harmonic_start.gsd", "w") as f:
    f.append(snap)
 
 ```

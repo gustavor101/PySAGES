@@ -2,7 +2,6 @@
 # See LICENSE.md and CONTRIBUTORS.md at https://github.com/SSAGESLabs/PySAGES
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, NamedTuple, Tuple, Union
 
 import jax
 from jax import numpy as np
@@ -22,7 +21,8 @@ from pysages.ml.objectives import (
     sum_squares,
 )
 from pysages.ml.utils import dispatch, pack, unpack
-from pysages.utils import Bool, Float, Int, JaxArray, solve_pos_def, try_import
+from pysages.typing import Any, Callable, JaxArray, NamedTuple, Tuple, Union
+from pysages.utils import solve_pos_def, try_import
 
 jopt = try_import("jax.example_libraries.optimizers", "jax.experimental.optimizers")
 
@@ -35,10 +35,10 @@ class AdamParams(NamedTuple):
     Parameters for the ADAM optimizer.
     """
 
-    step_size: Union[Float, Callable] = 1e-2
-    beta_1: Float = 0.9
-    beta_2: Float = 0.999
-    tol: Float = 1e-8
+    step_size: Union[float, Callable] = 1e-2
+    beta_1: float = 0.9
+    beta_2: float = 0.999
+    tol: float = 1e-8
 
 
 class LevenbergMarquardtParams(NamedTuple):
@@ -46,12 +46,12 @@ class LevenbergMarquardtParams(NamedTuple):
     Parameters for the Levenberg-Marquardt optimizer.
     """
 
-    mu_0: Float = 1e-1
-    mu_c: Float = 10.0
-    mu_min: Float = 1e-8
-    mu_max: Float = 1e8
-    rho_c: Float = 1e-1
-    rho_min: Float = 1e-4
+    mu_0: float = 1e-1
+    mu_c: float = 10.0
+    mu_min: float = 1e-8
+    mu_max: float = 1e8
+    rho_c: float = 1e-1
+    rho_min: float = 1e-4
 
 
 # Optimizers state
@@ -65,8 +65,8 @@ class WrappedState(NamedTuple):
 
     data: Tuple[JaxArray, JaxArray]
     params: Any
-    iters: Int = 0
-    improved: Bool = True
+    iters: int = 0
+    improved: bool = True
 
 
 class LevenbergMarquardtState(NamedTuple):
@@ -77,10 +77,10 @@ class LevenbergMarquardtState(NamedTuple):
     data: Tuple[JaxArray, JaxArray]
     params: JaxArray
     errors: JaxArray
-    cost: Float
-    mu: Float
-    iters: Int = 0
-    improved: Bool = True
+    cost: float
+    mu: float
+    iters: int = 0
+    improved: bool = True
 
 
 class LevenbergMarquardtBRState(NamedTuple):
@@ -91,19 +91,17 @@ class LevenbergMarquardtBRState(NamedTuple):
     data: Tuple[JaxArray, JaxArray]
     params: JaxArray
     errors: JaxArray
-    cost: Float
-    mu: Float
-    alpha: Float = 1e-4
-    iters: Int = 0
-    improved: Bool = True
+    cost: float
+    mu: float
+    alpha: float = 1e-4
+    iters: int = 0
+    improved: bool = True
 
 
 class Optimizer:
     """
     Abstract base class for all optimizers.
     """
-
-    pass
 
 
 @dataclass
@@ -115,8 +113,8 @@ class Adam(Optimizer):
     params: AdamParams = AdamParams()
     loss: Loss = SSE()
     reg: Regularizer = L2Regularization(0.0)
-    tol: Float = 1e-4
-    max_iters: Int = 10000
+    tol: float = 1e-4
+    max_iters: int = 10000
 
 
 @dataclass
@@ -128,7 +126,7 @@ class LevenbergMarquardt(Optimizer):
     params: LevenbergMarquardtParams = LevenbergMarquardtParams()
     loss: Loss = SSE()
     reg: Regularizer = L2Regularization(0.0)
-    max_iters: Int = 500
+    max_iters: int = 500
 
 
 @dataclass
@@ -138,13 +136,13 @@ class LevenbergMarquardtBR(Optimizer):
     """
 
     params: LevenbergMarquardtParams = LevenbergMarquardtParams()
-    alpha: Float = np.float64(0.0)
-    max_iters: Int = 500
+    alpha: float = 0.0
+    max_iters: int = 500
     update: Callable = lambda a, b, c, t: t
 
 
 @dispatch.abstract
-def build(optimizer, model):
+def build(optimizer, model):  # pylint: disable=W0613
     """
     Given an optimizer and a model, builds and return three functions `initialize`,
     `keep_iterating` and `update` that respectively handle the initialization of
@@ -158,6 +156,7 @@ def build(optimizer, model):
 
 @dispatch
 def build(optimizer: Adam, model):
+    # pylint: disable=C0116,E0102
     _init, _update, repack = jopt.adam(*optimizer.params)
     objective = build_objective_function(model, optimizer.loss, optimizer.reg)
     gradient = jax.grad(objective)
@@ -183,6 +182,7 @@ def build(optimizer: Adam, model):
 
 @dispatch
 def build(optimizer: LevenbergMarquardt, model):
+    # pylint: disable=C0116,E0102
     error, cost = build_split_cost_function(model, optimizer.loss, optimizer.reg)
     jac_err_prod = build_jac_err_prod(optimizer.loss, optimizer.reg)
     damped_hessian = build_damped_hessian(optimizer.loss, optimizer.reg)
@@ -229,6 +229,7 @@ def build(optimizer: LevenbergMarquardt, model):
 
 @dispatch
 def build(optimizer: LevenbergMarquardtBR, model):
+    # pylint: disable=C0116,E0102
     error = build_error_function(model, SSE())
     jacobian = jax.jacobian(error)
     _, c, mu_min, mu_max, rho_c, rho_min = optimizer.params
@@ -236,7 +237,7 @@ def build(optimizer: LevenbergMarquardtBR, model):
     #
     m = len(model.parameters) / 2 - 1
     k = unpack(model.parameters)[0].size
-    update_hyperparams = partial(optimizer.update, m, k, optimizer.alpha)
+    _update_hyperparams = partial(optimizer.update, m, k, optimizer.alpha)
 
     def initialize(params, x, y):
         e = error(params, x, y)
@@ -280,7 +281,7 @@ def build(optimizer: LevenbergMarquardtBR, model):
         improved = (C_ > C) | bad_step
         #
         bundle = (alpha, H, idx, sse, ssp, x.size)
-        alpha, *_ = cond(bad_step, lambda t: t, update_hyperparams, bundle)
+        alpha, *_ = cond(bad_step, lambda t: t, _update_hyperparams, bundle)
         C = (sse + alpha * ssp) / 2
         #
         return LevenbergMarquardtBRState(data, p, e, C, mu, alpha, iters + ~bad_step, improved)

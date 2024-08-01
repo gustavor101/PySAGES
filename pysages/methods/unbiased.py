@@ -11,10 +11,8 @@ A common use case is to record collective variables in unbiased
 simulations via the Histogram logger.
 """
 
-from typing import NamedTuple, Optional
-
 from pysages.methods.core import SamplingMethod, generalize
-from pysages.utils import JaxArray
+from pysages.typing import JaxArray, NamedTuple, Optional
 
 
 class UnbiasedState(NamedTuple):
@@ -26,10 +24,14 @@ class UnbiasedState(NamedTuple):
 
     bias: Optional[JaxArray]
         Either None or an array with all entries equal to zero.
+
+    ncalls: int
+        Counts the number of times the method's update has been called.
     """
 
     xi: JaxArray
     bias: Optional[JaxArray]
+    ncalls: int
 
     def __repr__(self):
         return repr("PySAGES" + type(self).__name__)
@@ -64,10 +66,10 @@ def _unbias(method, snapshot, helpers):
 
     def initialize():
         xi = cv(helpers.query(snapshot))
-        return UnbiasedState(xi, None)
+        return UnbiasedState(xi, None, 0)
 
     def update(state, data):
         xi = cv(data)
-        return UnbiasedState(xi, None)
+        return UnbiasedState(xi, None, state.ncalls + 1)
 
     return snapshot, initialize, generalize(update, helpers)

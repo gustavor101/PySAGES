@@ -13,8 +13,6 @@ simulation, which is done from the continuous approximation to the generalized m
 provided by the basis functions expansion.
 """
 
-from typing import NamedTuple, Tuple
-
 from jax import jit
 from jax import numpy as np
 from jax.lax import cond
@@ -27,11 +25,12 @@ from pysages.approxfun import (
     build_grad_evaluator,
     compute_mesh,
 )
-from pysages.grids import Chebyshev, Grid, build_indexer, convert
+from pysages.grids import Chebyshev, Grid, build_indexer, convert, grid_transposer
 from pysages.methods.core import GriddedSamplingMethod, Result, generalize
 from pysages.methods.restraints import apply_restraints
 from pysages.methods.utils import numpyfy_vals
-from pysages.utils import Bool, Int, JaxArray, dispatch, solve_pos_def
+from pysages.typing import JaxArray, NamedTuple, Tuple
+from pysages.utils import dispatch, first_or_all, solve_pos_def
 
 
 class SpectralABFState(NamedTuple):
@@ -64,11 +63,11 @@ class SpectralABFState(NamedTuple):
         The value of `Wp` for the previous integration step.
 
     fun: Fun
-        Object that holds the coeffients of the basis functions
+        Object that holds the coefficients of the basis functions
         approximation to the free energy.
 
-    nstep: int
-        Count the number of times the method's update has been called.
+    ncalls: int
+        Counts the number of times the method's update has been called.
     """
 
     xi: JaxArray
@@ -79,7 +78,7 @@ class SpectralABFState(NamedTuple):
     Wp: JaxArray
     Wp_: JaxArray
     fun: Fun
-    nstep: Int
+    ncalls: int
 
     def __repr__(self):
         return repr("PySAGES " + type(self).__name__)
@@ -91,7 +90,7 @@ class PartialSpectralABFState(NamedTuple):
     Fsum: JaxArray
     ind: Tuple
     fun: Fun
-    pred: Bool
+    pred: bool
 
 
 class SpectralABF(GriddedSamplingMethod):
@@ -137,7 +136,7 @@ class SpectralABF(GriddedSamplingMethod):
         self.grid = self.grid if self.grid.is_periodic else convert(self.grid, Grid[Chebyshev])
         self.model = SpectralGradientFit(self.grid)
 
-    def build(self, snapshot, helpers):
+    def build(self, snapshot, helpers, *_args, **_kwargs):
         """
         Returns the `initialize` and `update` functions for the sampling method.
         """
@@ -169,13 +168,13 @@ def _spectral_abf(method, snapshot, helpers):
         Wp = np.zeros(dims)
         Wp_ = np.zeros(dims)
         fun = fit(Fsum)
-        return SpectralABFState(xi, bias, hist, Fsum, force, Wp, Wp_, fun, 1)
+        return SpectralABFState(xi, bias, hist, Fsum, force, Wp, Wp_, fun, 0)
 
     def update(state, data):
         # During the intial stage use ABF
-        nstep = state.nstep
-        in_fitting_regime = nstep > fit_threshold
-        in_fitting_step = in_fitting_regime & (nstep % fit_freq == 1)
+        ncalls = state.ncalls + 1
+        in_fitting_regime = ncalls > fit_threshold
+        in_fitting_step = in_fitting_regime & (ncalls % fit_freq == 1)
         # Fit forces
         fun = fit_forces(state, in_fitting_step)
         # Compute the collective variable and its jacobian
@@ -195,15 +194,15 @@ def _spectral_abf(method, snapshot, helpers):
         )
         bias = np.reshape(-Jxi.T @ force, state.bias.shape)
         #
-        return SpectralABFState(xi, bias, hist, Fsum, force, Wp, state.Wp, fun, state.nstep + 1)
+        return SpectralABFState(xi, bias, hist, Fsum, force, Wp, state.Wp, fun, ncalls)
 
     return snapshot, initialize, generalize(update, helpers)
 
 
-def build_free_energy_fitter(method: SpectralABF, fit):
+def build_free_energy_fitter(_method: SpectralABF, fit):
     """
     Returns a function that given a `SpectralABFState` performs a least squares fit of the
-    generalized average forces for finding the coeffients of a basis functions expansion
+    generalized average forces for finding the coefficients of a basis functions expansion
     of the free energy.
     """
 
@@ -224,11 +223,12 @@ def build_free_energy_fitter(method: SpectralABF, fit):
 @dispatch
 def build_force_estimator(method: SpectralABF):
     """
-    Returns a function that given the coeffients of basis functions expansion and a CV
+    Returns a function that given the coefficients of basis functions expansion and a CV
     value, evaluates the function approximation to the gradient of the free energy.
     """
     N = method.N
     grid = method.grid
+    dims = grid.shape.size
     model = method.model
     get_grad = build_grad_evaluator(model)
 
@@ -243,17 +243,17 @@ def build_force_estimator(method: SpectralABF):
         return cond(state.pred, interpolate_force, average_force, state)
 
     if method.restraints is None:
-        estimate_force = _estimate_force
+        ob_force = jit(lambda state: np.zeros(dims))
     else:
         lo, hi, kl, kh = method.restraints
 
-        def restraints_force(state):
+        def ob_force(state):
             xi = state.xi.reshape(grid.shape.size)
             return apply_restraints(lo, hi, kl, kh, xi)
 
-        def estimate_force(state):
-            ob = np.any(np.array(state.ind) == grid.shape)  # Out of bounds condition
-            return cond(ob, restraints_force, _estimate_force, state)
+    def estimate_force(state):
+        ob = np.any(np.array(state.ind) == grid.shape)  # Out of bounds condition
+        return cond(ob, ob_force, _estimate_force, state)
 
     return estimate_force
 
@@ -293,7 +293,6 @@ def analyze(result: Result[SpectralABF]):
     For multiple-replicas runs we return a list (one item per-replica) for each attribute.
     """
     method = result.method
-    states = result.states
 
     grid = method.grid
     mesh = (compute_mesh(grid) + 1) * grid.size / 2 + grid.lower
@@ -304,10 +303,11 @@ def analyze(result: Result[SpectralABF]):
         return Fsum / np.maximum(hist, 1)
 
     def build_fes_fn(fun):
-        return jit(lambda x: evaluate(fun, x))
+        def fes_fn(x):
+            A = evaluate(fun, x)
+            return A.max() - A
 
-    def first_or_all(seq):
-        return seq[0] if len(seq) == 1 else seq
+        return jit(fes_fn)
 
     hists = []
     mean_forces = []
@@ -315,20 +315,25 @@ def analyze(result: Result[SpectralABF]):
     funs = []
     fes_fns = []
 
-    for s in states:
+    # We transpose the data for convenience when plotting
+    transpose = grid_transposer(grid)
+    d = mesh.shape[-1]
+
+    for s in result.states:
         fes_fn = build_fes_fn(s.fun)
-        hists.append(s.hist)
-        mean_forces.append(average_forces(s.hist, s.Fsum))
-        free_energies.append(fes_fn(mesh))
+        hists.append(transpose(s.hist))
+        mean_forces.append(transpose(average_forces(s.hist, s.Fsum)))
+        free_energies.append(transpose(fes_fn(mesh)))
         funs.append(s.fun)
         fes_fns.append(fes_fn)
 
-    ana_result = dict(
-        histogram=first_or_all(hists),
-        mean_force=first_or_all(mean_forces),
-        free_energy=first_or_all(free_energies),
-        mesh=mesh,
-        fun=first_or_all(funs),
-        fes_fn=first_or_all(fes_fns),
-    )
+    ana_result = {
+        "histogram": first_or_all(hists),
+        "mean_force": first_or_all(mean_forces),
+        "free_energy": first_or_all(free_energies),
+        "mesh": transpose(mesh).reshape(-1, d).squeeze(),
+        "fun": first_or_all(funs),
+        "fes_fn": first_or_all(fes_fns),
+    }
+
     return numpyfy_vals(ana_result)

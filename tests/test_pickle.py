@@ -1,9 +1,11 @@
+import importlib
 import inspect
+import pathlib
 import tempfile
 
 import dill as pickle
-import jax_md as jmd
 import numpy as np
+import test_simulations.abf as abf_example
 
 import pysages
 import pysages.colvars
@@ -14,7 +16,9 @@ pi = np.pi
 
 def build_neighbor_list(box_size, positions, r_cutoff, capacity_multiplier):
     """Helper function to generate a jax-md neighbor list"""
-    displacement_fn, shift_fn = jmd.space.periodic(box_size)
+    jmd = importlib.import_module("jax_md")
+
+    displacement_fn, _ = jmd.space.periodic(box_size)
     neighbor_list_fn = jmd.partition.neighbor_list(
         displacement_fn,
         box_size,
@@ -23,6 +27,7 @@ def build_neighbor_list(box_size, positions, r_cutoff, capacity_multiplier):
         format=jmd.partition.NeighborListFormat.Dense,
     )
     neighbors = neighbor_list_fn.allocate(positions)
+
     return neighbors
 
 
@@ -76,6 +81,12 @@ METHODS_ARGS = {
     "SpectralABF": {
         "cvs": [pysages.colvars.Component([0], 0), pysages.colvars.Component([0], 1)],
         "grid": pysages.Grid(lower=(1, 1), upper=(5, 5), shape=(32, 32)),
+    },
+    "Sirens": {
+        "cvs": [pysages.colvars.Component([0], 0), pysages.colvars.Component([0], 1)],
+        "grid": pysages.Grid(lower=(1, 1), upper=(5, 5), shape=(32, 32)),
+        "topology": (14,),
+        "mode": "abf",
     },
     "HistogramLogger": {
         "period": 1,
@@ -136,9 +147,11 @@ COLVAR_ARGS = {
         "number_of_opt_it": 10,
         "standard_deviation": 0.125,
         "mesh_size": 30,
-        "nbrs": build_neighbor_list(
-            2.0, positions=np.random.randn(20, 3), r_cutoff=1.5, capacity_multiplier=1.0
-        ),
+        "nbrs": None,
+        # Disable build_neighbor_list until jax_md stabilizes
+        # "nbrs": build_neighbor_list(
+        #     2.0, positions=np.random.randn(20, 3), r_cutoff=1.5, capacity_multiplier=1.0
+        # ),
         "fractional_coords": True,
     },
 }
@@ -162,8 +175,7 @@ def test_pickle_colvars():
 
 
 def test_pickle_results():
-    with open("tests/test_abf_result.pickle", "rb") as f:
-        test_result = pickle.load(f)
+    test_result = abf_example.run_simulation(10, write_output=False)
 
     with tempfile.NamedTemporaryFile() as tmp_pickle:
         pickle.dump(test_result, tmp_pickle)
@@ -175,3 +187,14 @@ def test_pickle_results():
         assert np.all(test_result.states[0].bias == tmp_result.states[0].bias).item()
         assert np.all(test_result.states[0].hist == tmp_result.states[0].hist).item()
         assert np.all(test_result.states[0].Fsum == tmp_result.states[0].Fsum).item()
+
+    tmp_file = pathlib.Path(".tmp_test_pickle")
+    pysages.save(test_result, tmp_file)
+    tmp_result = pysages.load(tmp_file.name)
+
+    assert np.all(test_result.states[0].xi == tmp_result.states[0].xi).item()
+    assert np.all(test_result.states[0].bias == tmp_result.states[0].bias).item()
+    assert np.all(test_result.states[0].hist == tmp_result.states[0].hist).item()
+    assert np.all(test_result.states[0].Fsum == tmp_result.states[0].Fsum).item()
+
+    tmp_file.unlink()
