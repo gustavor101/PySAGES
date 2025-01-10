@@ -20,8 +20,8 @@ from pysages.methods.core import NNSamplingMethod, Result, generalize
 from pysages.methods.restraints import apply_restraints
 from pysages.methods.utils import numpyfy_vals
 from pysages.ml.models import MLP
-from pysages.ml.objectives import L2Regularization
-from pysages.ml.optimizers import LevenbergMarquardt
+from pysages.ml.objectives import MeanLoss
+from pysages.ml.optimizers import VESOptimizer
 from pysages.ml.training import NNData, build_fitting_function, convolve, normalize
 from pysages.ml.utils import blackman_kernel, pack, unpack
 from pysages.typing import JaxArray, NamedTuple, Tuple
@@ -36,19 +36,21 @@ class VESState(NamedTuple):
     ----------
 
     xi: JaxArray (CV shape)
-        Last collective variable recorded in the simulation.
+        CV of real variable (coords) recorded in the simulation.
 
     bias: JaxArray (natoms, 3)
         Array with biasing forces for each particle.
 
         nn: NNData
         Bundle of the neural network parameters, and output scaling coefficients.
-
+    si: JaxArray (CV shape)
+        CV in extended space
     ncalls: int
         Counts the number of times the method's update has been called.
     """
 
     xi: JaxArray
+    si: JaxArray
     bias: JaxArray
     nn: NNData
     ncalls: int
@@ -59,6 +61,8 @@ class VESState(NamedTuple):
 
 class PartialVESState(NamedTuple):
     xi: JaxArray
+    si: JaxArray
+    n_walkers: int
     ind: Tuple
     nn: NNData
     pred: bool
@@ -99,7 +103,7 @@ class VES(NNSamplingMethod):
         self.train_freq = kwargs.get("train_freq", 5000)
 
         # Neural network and optimizer intialization
-        dims = grid.shape.size
+        dims = xi.shape.size
         scale = partial(_scale, grid=grid)
         self.model = MLP(dims, dims, topology, transform=scale)
         default_optimizer = LevenbergMarquardt(reg=L2Regularization(1e-6))
@@ -127,11 +131,11 @@ def _ves(method, snapshot, helpers):
     def initialize():
         xi, _ = cv(helpers.query(snapshot))
         bias = np.zeros((natoms, helpers.dimensionality()))
+        cv_walkers = jnp.zeros([n_walker, cv_dim])
         nn = NNData(ps, F, F)
         return VESState(xi, bias, hist, Fsum, F, Wp, Wp_, nn, 0)
 
     def update(state, data):
-        # During the intial stage, when there are not enough collected samples, use ABF
         ncalls = state.ncalls + 1
         in_training_regime = ncalls > 2 * train_freq
         in_training_step = in_training_regime & (ncalls % train_freq == 1)
