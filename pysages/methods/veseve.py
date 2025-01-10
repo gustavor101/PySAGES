@@ -158,10 +158,6 @@ def _ves(method, snapshot, helpers):
         xi, Jxi = cv(data)
 
         # Extended Space Walkers
-        
-        #F = estimate_free_energy_grad(
-        #    PartialVESState(xi, hist, Fsum, I_xi, nn, in_training_regime)
-        #)
 
         dz = grad(jnp.sum(student_model(zw)))
         dt = snapshot.dt
@@ -170,12 +166,13 @@ def _ves(method, snapshot, helpers):
         si = si - dt * dz 
             + np.sqrt(2 * dt / beta_hat) * weiner_si
 
-        #
-        #p = data.momenta
+        F = estimate_free_energy_grad(
+            PartialVESState(xi, si, n_walkers, gamma_s, gamma_theta, beta_hat, ind, nn, pred)
+        )
         
         bias = (1-beta_hat)(Jxi.T @ F).reshape(state.bias.shape)
         #
-        
+
         return VESState(xi, si, n_walkers, gamma_s, gamma_theta, bias, nn, ncalls)
     
     return snapshot, initialize, generalize(update, helpers)
@@ -192,22 +189,17 @@ def build_free_energy_grad_learner(method: VES):
     model = method.model
 
     # Training data
-    inputs = (compute_mesh(grid) + 1) * grid.size / 2 + grid.lower
+    inputs = xi
 
     _, layout = unpack(model.parameters)
     fit = build_fitting_function(model, method.optimizer)
 
-    def train(nn, y):
+    def train(nn, x, y):
         axes = tuple(range(y.ndim - 1))
         y, mean, std = normalize(y, axes=axes)
         reference = smooth(y)
-        params = fit(nn.params, inputs, reference).params
+        params = fit(nn.params, x, reference).params
         return NNData(params, mean, std / reference.std(axis=axes))
-
-    def learn_free_energy_grad(state):
-        hist = np.expand_dims(state.hist, state.hist.ndim)
-        F = state.Fsum / np.maximum(hist, 1)
-        return train(state.nn, F)
 
     def skip_learning(state):
         return state.nn
