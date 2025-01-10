@@ -82,6 +82,18 @@ class LevenbergMarquardtState(NamedTuple):
     iters: int = 0
     improved: bool = True
 
+class VESState(NamedTuple):
+    """
+    Holds the data for a VES optimization run.
+    """
+
+    data: Tuple[JaxArray, JaxArray]
+    params: JaxArray
+    errors: JaxArray
+    cost: float
+    mu: float
+    iters: int = 0
+    improved: bool = True
 
 class LevenbergMarquardtBRState(NamedTuple):
     """
@@ -140,6 +152,16 @@ class LevenbergMarquardtBR(Optimizer):
     max_iters: int = 500
     update: Callable = lambda a, b, c, t: t
 
+@dataclass
+class VESOptimizer(Optimizer):
+    """
+    VES optimizer.
+    """
+
+    params: VESParams = VESParams()
+    loss: Loss = Meanloss()
+#    reg: Regularizer = L2Regularization(0.0)
+    max_iters: int = 500
 
 @dispatch.abstract
 def build(optimizer, model):  # pylint: disable=W0613
