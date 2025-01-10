@@ -8,6 +8,7 @@ Variational enhanced sampling in extended lagrangian using neural networks
 from functools import partial
 
 from jax import jit
+from jax import grad
 from jax import numpy as np
 from jax import vmap
 from jax.lax import cond
@@ -43,14 +44,20 @@ class VESState(NamedTuple):
 
         nn: NNData
         Bundle of the neural network parameters, and output scaling coefficients.
+        
     si: JaxArray (CV shape)
         CV in extended space
+        
     ncalls: int
         Counts the number of times the method's update has been called.
     """
 
     xi: JaxArray
     si: JaxArray
+    n_walkers: int #Remove if we use [n_walkers, cv_dim] otherwise keep if [cv_dim]
+    gamma_s: float
+    gamma_theta: float
+    beta_hat: float
     bias: JaxArray
     nn: NNData
     ncalls: int
@@ -63,6 +70,9 @@ class PartialVESState(NamedTuple):
     xi: JaxArray
     si: JaxArray
     n_walkers: int
+    gamma_s: float
+    gamma_theta: float
+    beta_hat: float
     ind: Tuple
     nn: NNData
     pred: bool
@@ -108,9 +118,10 @@ class VES(NNSamplingMethod):
         self.model = MLP(dims, dims, topology, transform=scale)
         default_optimizer = LevenbergMarquardt(reg=L2Regularization(1e-6))
         self.optimizer = kwargs.get("optimizer", default_optimizer)
-
+        
+    # How to estimate the energy
     def build(self, snapshot, helpers):
-        return _funn(self, snapshot, helpers)
+        return _ves(self, snapshot, helpers) #?
 
 
 def _ves(method, snapshot, helpers):
@@ -118,7 +129,7 @@ def _ves(method, snapshot, helpers):
     train_freq = method.train_freq
 
     dt = snapshot.dt
-    dims = grid.shape.size
+    dims = xi.shape.size
     natoms = np.size(snapshot.positions, 0)
 
     # Neural network and optimizer
@@ -131,27 +142,42 @@ def _ves(method, snapshot, helpers):
     def initialize():
         xi, _ = cv(helpers.query(snapshot))
         bias = np.zeros((natoms, helpers.dimensionality()))
-        cv_walkers = jnp.zeros([n_walker, cv_dim])
+        cv_walkers = jnp.zeros([n_walker, cv_dim]) #?
         nn = NNData(ps, F, F)
-        return VESState(xi, bias, hist, Fsum, F, Wp, Wp_, nn, 0)
+        return VESState(xi, si, n_walkers, gamma_s, gamma_theta, bias, nn, 0)
 
+    
     def update(state, data):
         ncalls = state.ncalls + 1
         in_training_regime = ncalls > 2 * train_freq
         in_training_step = in_training_regime & (ncalls % train_freq == 1)
+        
         # NN training
         nn = learn_free_energy_grad(state, in_training_step)
         # Compute the collective variable and its jacobian
         xi, Jxi = cv(data)
-        #
-        p = data.momenta
-        F = estimate_free_energy_grad(
-            PartialVESState(xi, hist, Fsum, I_xi, nn, in_training_regime)
-        )
-        bias = (-Jxi.T @ F).reshape(state.bias.shape)
-        #
-        return VESState(xi, bias, hist, Fsum, F, Wp, state.Wp, nn, ncalls)
 
+        # Extended Space Walkers
+        
+        #F = estimate_free_energy_grad(
+        #    PartialVESState(xi, hist, Fsum, I_xi, nn, in_training_regime)
+        #)
+
+        dz = grad(jnp.sum(student_model(zw)))
+        dt = snapshot.dt
+        weiner_si = jnp.sqrt(2*gamma_s)*jnp.array(np.random.randn(n_walker, cv_dim))
+        
+        si = si - dt * dz 
+            + np.sqrt(2 * dt / beta_hat) * weiner_si
+
+        #
+        #p = data.momenta
+        
+        bias = (1-beta_hat)(Jxi.T @ F).reshape(state.bias.shape)
+        #
+        
+        return VESState(xi, si, n_walkers, gamma_s, gamma_theta, bias, nn, ncalls)
+    
     return snapshot, initialize, generalize(update, helpers)
 
 
@@ -162,15 +188,11 @@ def build_free_energy_grad_learner(method: VES):
 
     The training data is regularized by convolving it with a Blackman window.
     """
-    dims = grid.shape.size
+    dims = xi.shape.size
     model = method.model
 
     # Training data
     inputs = (compute_mesh(grid) + 1) * grid.size / 2 + grid.lower
-    smoothing_kernel = blackman_kernel(dims, 7)
-    padding = "wrap" if grid.is_periodic else "edge"
-    conv = partial(convolve, kernel=smoothing_kernel, boundary=padding)
-    smooth = jit(lambda y: vmap(conv)(y.T).T)
 
     _, layout = unpack(model.parameters)
     fit = build_fitting_function(model, method.optimizer)
