@@ -51,7 +51,10 @@ class Sobolev1SSE(Sobolev1Loss):
     """
     Sum-of-Squared-Errors and Squared-Gradient-Errors Loss.
     """
-
+class MeanLoss:
+    """
+    Mean value Loss.
+    """
 
 # Regularizers
 class Regularizer:
