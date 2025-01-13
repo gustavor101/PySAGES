@@ -51,7 +51,8 @@ class Sobolev1SSE(Sobolev1Loss):
     """
     Sum-of-Squared-Errors and Squared-Gradient-Errors Loss.
     """
-class MeanLoss:
+    
+class MeanLoss(Loss):
     """
     Mean value Loss.
     """
