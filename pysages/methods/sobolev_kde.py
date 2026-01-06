@@ -295,9 +295,6 @@ def build_free_energy_grad_learner(method: SKDE):
         points = points * (gridmax - gridmin) + gridmin
         return points, key
 
-    def periodic(distance, box):
-        return np.mod(distance + box * 0.5, box) - 0.5 * box
-
     def row_sum(x):
         """
         Sum array `x` along each of its row (`axis = 1`),
