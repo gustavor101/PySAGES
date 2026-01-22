@@ -18,8 +18,6 @@ from jax import grad, jit
 from jax import numpy as np
 from jax import random, value_and_grad, vmap
 from jax.lax import cond
-from objectives import L2Regularization, Sobolev1SSE
-from optimizers import JaxOptimizer
 
 from pysages.approxfun import compute_mesh
 from pysages.approxfun import scale as _scale
@@ -30,6 +28,8 @@ from pysages.methods.metad import sum_of_gaussians
 from pysages.methods.restraints import apply_restraints
 from pysages.methods.utils import numpyfy_vals
 from pysages.ml.models import Siren
+from pysages.ml.objectives import L2Regularization, Sobolev1SSE
+from pysages.ml.optimizers import JaxOptimizer
 from pysages.ml.training import NNData, build_fitting_function
 from pysages.ml.utils import pack, unpack
 from pysages.typing import JaxArray, NamedTuple, Tuple
@@ -144,7 +144,6 @@ class SKDE(NNSamplingMethod):
         self.nbatches = np.asarray(kwargs.get("nbatches", 5000))
         self.N = np.asarray(kwargs.get("N", 500))
         self.kT = np.asarray(kwargs.get("kT", 1.0))
-        self.rho = np.asarray(kwargs.get("rho", 0.6))
         self.train_freq = kwargs.get("train_freq", 5000)
         self.biasfactor = kwargs.get("biasfactor", 20)
         self.ntrains = kwargs.get("ntrains", 10000)
@@ -250,7 +249,6 @@ def build_free_energy_grad_learner(method: SKDE):
     model = method.model
     kT = method.kT
     si_size = method.si
-    rho = method.rho
     ntrains = method.ntrains
     train_freq = method.train_freq
     sigma = method.sigma
@@ -295,6 +293,9 @@ def build_free_energy_grad_learner(method: SKDE):
         points = points * (gridmax - gridmin) + gridmin
         return points, key
 
+    def periodic(distance, box):
+        return np.mod(distance + box * 0.5, box) - 0.5 * box
+
     def row_sum(x):
         """
         Sum array `x` along each of its row (`axis = 1`),
@@ -333,7 +334,7 @@ def build_free_energy_grad_learner(method: SKDE):
         _, gradn = vmap(lambda x: apply(params, x))(hist)
         hist = hist + sigma * sigma * state.nn.std * gradn / 2.0
         hist = wrap(hist, P)
-        k = np.floor(state.ncalls / train_freq)
+        k = np.floor(state.ncalls / train_freq) - ntrains
         # Combine the LHS and the unbiased batch sampling for FES integration
         si = np.concatenate([state.si, hist], axis=0)
         fe0, grad0 = vmap(lambda x: apply(params, x))(si)
@@ -368,14 +369,14 @@ def build_free_energy_grad_learner(method: SKDE):
         probf = 1.0 / (1.0 + rho_pf)
         force = (grad0 + rho_f) * probf.reshape((grad0.shape[0], 1))
         # Training
-        std0 = np.maximum(ener.std(), force.std(axis=0).max())
-        nn_temp = train(state.nn, si, (ener, force, mean0, std0))
+        std0 = ener.std()
+        stdfinal = np.where(k < 1, std0, state.nn.std + (std0 - state.nn.std) / k)
+        meanfinal = np.where(k < 1, mean0, state.nn.mean + (mean0 - state.nn.mean) / k)
+        nn_temp = train(state.nn, si, (ener, force, meanfinal, stdfinal))
         params_now, _ = unpack(nn_temp.params)
         params_old, _ = unpack(state.nn.params)
-        params_final = np.where(
-            k < ntrains, params_now, rho * params_old + (1.0 - rho) * params_now
-        )
-        nn = NNData(params_final, mean0, std0)
+        params_final = np.where(k < 1, params_now, params_old + (params_now - params_old) / k)
+        nn = NNData(params_final, meanfinal, stdfinal)
         # New LHS points
         new_si, key = latin_hypercube_samples(
             state.key, si_size, dims, grid.lower.flatten(), grid.upper.flatten()
