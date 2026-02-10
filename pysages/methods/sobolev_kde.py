@@ -343,7 +343,9 @@ def build_free_energy_grad_learner(method: SKDE):
         grad0 = state.nn.std * grad0
         # Set the minimum in FES as in ANN method
         fe = state.phi - gamma * femin
+        fe_f= fe - fe / gamma
         weights = np.exp(fe / kT)
+        weights_f = np.exp(fe_f / kT)
         # KDE estimation of the frequencies
         sigma_n = sigma * sigma
         rho_p = vmap(
@@ -358,12 +360,12 @@ def build_free_energy_grad_learner(method: SKDE):
         # KDE estimation of the mean forces
         rho_f = vmap(
             lambda x: sum_of_gaussiansf(
-                x, F / (np.power(np.sqrt(2 * np.pi * sigma_n), dims)), state.hist, sigma, P
+                x, F * weights_f.reshape((hist.shape[0], 1))/ (np.power(np.sqrt(2 * np.pi * sigma_n), dims)), state.hist, sigma, P
             )
         )(si)
         rho_pf = vmap(
             lambda x: sum_of_gaussians(
-                x, 1.0 / (np.power(np.sqrt(2 * np.pi * sigma_n), dims)), state.hist, sigma, P
+                x, weights_f / (np.power(np.sqrt(2 * np.pi * sigma_n), dims)), state.hist, sigma, P
             )
         )(si)
         probf = 1.0 / (1.0 + rho_pf)
