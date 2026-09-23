@@ -28,8 +28,8 @@ from pysages.methods.metad import sum_of_gaussians
 from pysages.methods.restraints import apply_restraints
 from pysages.methods.utils import numpyfy_vals
 from pysages.ml.models import Siren
-from pysages.ml.objectives import L2Regularization, Sobolev1SSE
-from pysages.ml.optimizers import JaxOptimizer
+from objectives import L2Regularization, Sobolev1SSE
+from optimizers import JaxOptimizer
 from pysages.ml.training import NNData, build_fitting_function
 from pysages.ml.utils import pack, unpack
 from pysages.typing import JaxArray, NamedTuple, Tuple
@@ -331,45 +331,38 @@ def build_free_energy_grad_learner(method: SKDE):
         F = state.Fsum
         # Unbias the density estimation by score function (arxiv)
         params = pack(state.nn.params, layout)
-        _, gradn = vmap(lambda x: apply(params, x))(hist)
-        hist = hist + sigma * sigma * state.nn.std * gradn / 2.0
+        enern, gradn = vmap(lambda x: apply(params, x))(hist)
+        enern = state.nn.std * enern
+        gradn = state.nn.std * gradn
+        key, subkey, subkey2 = random.split(state.key,num=3)
+        hist = hist + 0.5* sigma * sigma * gradn / kT + sigma*random.normal(subkey2,shape=state.hist.shape)
         hist = wrap(hist, P)
-        k = np.floor(state.ncalls / train_freq) - ntrains
+        k0 =np.floor(state.ncalls / train_freq)
+        k = k0 - ntrains
         # Combine the LHS and the unbiased batch sampling for FES integration
-        si = np.concatenate([state.si, hist], axis=0)
+        si = np.concatenate([state.si, state.hist, hist], axis=0)
         fe0, grad0 = vmap(lambda x: apply(params, x))(si)
-        femin = state.nn.std * fe0.min()
-        fe0 = state.nn.std * (fe0 - fe0.min())
+        fe0 = state.nn.std * fe0
         grad0 = state.nn.std * grad0
         # Set the minimum in FES as in ANN method
-        fe = state.phi - gamma * femin
-        fe_f= fe - fe / gamma
-        weights = np.exp(fe / kT)
-        weights_f = np.exp(fe_f / kT)
+        weights = np.exp(((gamma-1.0)*fe0-state.nn.mean) / kT)
         # KDE estimation of the frequencies
-        sigma_n = sigma * sigma
         rho_p = vmap(
             lambda x: sum_of_gaussians(
-                x, weights / (np.power(np.sqrt(2 * np.pi * sigma_n), dims)), state.hist, sigma, P
+                x, 1.0, state.hist, sigma, P
             )
         )(si)
-        density = np.exp(fe0 / kT) + rho_p
-        ener = kT * np.log(density)
+        density = 1.0 + rho_p * weights
+        ener = kT * np.log1p(rho_p * weights) + fe0 + state.nn.mean
         ener = ener.reshape((grad0.shape[0], 1))
         mean0 = ener.mean()
         # KDE estimation of the mean forces
         rho_f = vmap(
             lambda x: sum_of_gaussiansf(
-                x, F * weights_f.reshape((hist.shape[0], 1))/ (np.power(np.sqrt(2 * np.pi * sigma_n), dims)), state.hist, sigma, P
+                x, F, state.hist, sigma, P
             )
         )(si)
-        rho_pf = vmap(
-            lambda x: sum_of_gaussians(
-                x, weights_f / (np.power(np.sqrt(2 * np.pi * sigma_n), dims)), state.hist, sigma, P
-            )
-        )(si)
-        probf = 1.0 / (1.0 + rho_pf)
-        force = (grad0 + rho_f) * probf.reshape((grad0.shape[0], 1))
+        force = (grad0 + rho_f*weights.reshape((grad0.shape[0],1)))/density.reshape((grad0.shape[0], 1))
         # Training
         std0 = ener.std()
         stdfinal = np.where(k < 1, std0, state.nn.std + (std0 - state.nn.std) / k)
@@ -381,7 +374,7 @@ def build_free_energy_grad_learner(method: SKDE):
         nn = NNData(params_final, meanfinal, stdfinal)
         # New LHS points
         new_si, key = latin_hypercube_samples(
-            state.key, si_size, dims, grid.lower.flatten(), grid.upper.flatten()
+            subkey, si_size, dims, grid.lower.flatten(), grid.upper.flatten()
         )
         return nn, new_si, key
 
