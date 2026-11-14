@@ -74,6 +74,16 @@ from .spectral_abf import SpectralABF
 from .spline_string import SplineString
 from .umbrella_integration import UmbrellaIntegration
 from .unbiased import Unbiased
+from .variational_kde import (
+    DBCZAR,
+    DBKABF,
+    DBKMetaD,
+    DepositedBatchCZAR,
+    DepositedBatchKernelABF,
+    DepositedBatchKernelMetaD,
+    FirstOrderKernelMetaD,
+    FOKMetaD,
+)
 from .utils import (
     HistogramLogger,
     MetaDLogger,
