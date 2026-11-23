@@ -375,26 +375,34 @@ def build_bias_grad_evaluator(method: Funnel_MetaDABF):
         periods = get_periods(method.cvs)
         evaluate_bias_grad = jit(lambda pstate: grad(sum_of_gaussians)(*pstate[:4], periods))
     else:
+        # The CV restraints act whenever xi lies beyond their bounds, ADDED to the
+        # metadynamics force rather than replacing it. This requires the grid to
+        # extend past the restraint bounds (a buffer of several sigmas), so hills
+        # can be deposited where the walker dwells against the walls; otherwise
+        # the wall region is un-fillable and the walker accumulates there as the
+        # interior bias grows (hollow-shell sampling).
         if restraints:
+            lo, hi, kl, kh = restraints
 
-            def ob_force(pstate):  # out-of-bounds force
-                lo, hi, kl, kh = restraints
-                xi, *_ = pstate
+            def wall_force(pstate):
                 xi = pstate.xi.reshape(grid.shape.size)
-                force = apply_restraints(lo, hi, kl, kh, xi)
-                return force
+                return apply_restraints(lo, hi, kl, kh, xi)  # zero inside [lo, hi]
 
         else:
 
-            def ob_force(pstate):  # out-of-bounds force
+            def wall_force(pstate):
                 return np.zeros(grid.shape.size)
 
         def get_force(pstate):
             return pstate.grid_gradient[pstate.grid_idx]
 
+        def zero_force(pstate):  # off the (buffered) grid: no metad extrapolation
+            return np.zeros(grid.shape.size)
+
         def evaluate_bias_grad(pstate):
             ob = np.any(np.array(pstate.grid_idx) == grid.shape)  # out of bounds
-            return cond(ob, ob_force, get_force, pstate)
+            metad = cond(ob, zero_force, get_force, pstate)
+            return metad + wall_force(pstate)
 
     return evaluate_bias_grad
 
