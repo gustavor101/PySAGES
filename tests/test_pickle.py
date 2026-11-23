@@ -82,6 +82,16 @@ METHODS_ARGS = {
         "cvs": [pysages.colvars.Component([0], 0), pysages.colvars.Component([0], 1)],
         "grid": pysages.Grid(lower=(1, 1), upper=(5, 5), shape=(32, 32)),
     },
+    "SteeredSABF": {
+        "cvs": [pysages.colvars.Component([0], 0), pysages.colvars.Component([0], 1)],
+        "grid": pysages.Grid(lower=(1, 1), upper=(5, 5), shape=(32, 32)),
+        "kspring": (100.0, 0.0),
+        "center": (2.0, 3.0),
+        "velocity": (0.5, 0.0),
+        "center_lower": 1.5,
+        "center_upper": 4.5,
+        "dwell": 10,
+    },
     "Sirens": {
         "cvs": [pysages.colvars.Component([0], 0), pysages.colvars.Component([0], 1)],
         "grid": pysages.Grid(lower=(1, 1), upper=(5, 5), shape=(32, 32)),
