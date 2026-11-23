@@ -12,6 +12,13 @@ PySAGES with your own.
 
 from .angles import Angle, DihedralAngle
 from .coordinates import Component, Displacement, Distance
+from .distributions import (
+    AxialDensityDivergence,
+    CoordinationDistributionDivergence,
+    DistributionClassifier,
+    ElectrostaticPotentialDivergence,
+)
+from .fape import FAPE
 from .shape import (
     Acylindricity,
     Asphericity,
