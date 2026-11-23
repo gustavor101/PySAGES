@@ -38,7 +38,7 @@ def funnel(xi_par, xi_perp, Zcc, Z_0, R, k, k_cv, cv_min, cv_max):
         cone(xi_par, xi_perp, Zcc, Z_0, R, k)
         + borderL(xi_par, k_cv, cv_min)
         + borderU(xi_par, k_cv, cv_max),
-        cylinder(xi_perp, R, k) + borderU(xi_par, k_cv, cv_max) + borderL(xi_par, k_cv, cv_max),
+        cylinder(xi_perp, R, k) + borderU(xi_par, k_cv, cv_max) + borderL(xi_par, k_cv, cv_min),
     )
 
 
