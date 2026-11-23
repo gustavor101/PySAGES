@@ -5,6 +5,7 @@ import jax.numpy as np
 from jax import grad, jit
 from jax.numpy import linalg as _linalg
 
+from pysages.colvars.core import build as _build_cvs
 from pysages.colvars.funnels import center as _center
 from pysages.colvars.funnels import kabsch as _kabsch
 from pysages.colvars.funnels import periodic as _periodic
@@ -372,4 +373,87 @@ def get_funnel_keepout_force(
         )
     return jit(
         partial(external_funnel_keepout, funnel_kwargs=funnel_kwargs, keepout_kwargs_list=kos)
+    )
+
+
+# =============================================================================
+# GATED WALL.  A harmonic wall on one collective variable that is only active
+# while a second collective variable (the gate) lies inside a window:
+#     E = s(x_gate) * 0.5 k * [max(0, wall_lower - x_wall)^2 + max(0, x_wall - wall_upper)^2]
+# s = 1 for lower_on <= x_gate <= upper_on, with cosine ramps down to 0 at
+# lower_off and upper_off, and 0 outside (E and its gradient are continuous).
+# Typical use: keep a ligand aligned with the host axis only while it crosses
+# the entrance of the binding site, so that both end states stay unrestrained.
+# The free energy difference between two states that lie outside the window is
+# then not changed by the restraint, as long as the restraint is treated as part
+# of the Hamiltonian (its mean force along the gate CV must not be removed).
+# =============================================================================
+
+
+def window_switch(x, lower_off, lower_on, upper_on, upper_off):
+    """1 for lower_on <= x <= upper_on, cosine ramps to 0 at lower_off and upper_off."""
+    up = np.clip((x - lower_off) / (lower_on - lower_off), 0.0, 1.0)
+    down = np.clip((upper_off - x) / (upper_off - upper_on), 0.0, 1.0)
+    return 0.25 * (1.0 - np.cos(np.pi * up)) * (1.0 - np.cos(np.pi * down))
+
+
+def gated_wall_energy(
+    x_gate, x_wall, lower_off, lower_on, upper_on, upper_off, wall_lower, wall_upper, k
+):
+    below = np.maximum(wall_lower - x_wall, 0.0)
+    above = np.maximum(x_wall - wall_upper, 0.0)
+    s = window_switch(x_gate, lower_off, lower_on, upper_on, upper_off)
+    return s * 0.5 * k * (below * below + above * above)
+
+
+def intermediate_gated_wall(positions, data, gate_cv, wall_cv, **params):
+    cvs = _build_cvs(gate_cv, wall_cv, differentiate=False)
+    xi = cvs(data._replace(positions=positions)).flatten()
+    return gated_wall_energy(xi[0], xi[1], **params)
+
+
+def external_gated_wall(data, gate_cv, wall_cv, **params):
+    """(dE/dpositions, [x_gate, x_wall, s, E]) for one gated wall; same contract as
+    external_funnel (the method subtracts the returned gradient from the forces)."""
+    bias = grad(intermediate_gated_wall)(data.positions, data, gate_cv, wall_cv, **params)
+    cvs = _build_cvs(gate_cv, wall_cv, differentiate=False)
+    xi = cvs(data).flatten()
+    s = window_switch(
+        xi[0], params["lower_off"], params["lower_on"], params["upper_on"], params["upper_off"]
+    )
+    energy = gated_wall_energy(xi[0], xi[1], **params)
+    return bias[:, :3], np.array([xi[0], xi[1], s, energy])
+
+
+def get_gated_wall_force(
+    gate_cv,
+    wall_cv,
+    lower_off,
+    lower_on,
+    upper_on,
+    upper_off,
+    k,
+    wall_lower=None,
+    wall_upper=None,
+):
+    """Gated wall on `wall_cv`, switched by `gate_cv` (both single-valued collective
+    variables). The window bounds must satisfy lower_off < lower_on <= upper_on <
+    upper_off; give `wall_lower` and/or `wall_upper` for the side(s) to restrain."""
+    if not lower_off < lower_on <= upper_on < upper_off:
+        raise ValueError("The gate needs lower_off < lower_on <= upper_on < upper_off.")
+    if wall_lower is None and wall_upper is None:
+        raise ValueError("Give `wall_lower` and/or `wall_upper`.")
+    return jit(
+        partial(
+            external_gated_wall,
+            gate_cv=gate_cv,
+            wall_cv=wall_cv,
+            lower_off=lower_off,
+            lower_on=lower_on,
+            upper_on=upper_on,
+            upper_off=upper_off,
+            wall_lower=-np.inf if wall_lower is None else wall_lower,
+            wall_upper=np.inf if wall_upper is None else wall_upper,
+            k=k,
+        )
     )
